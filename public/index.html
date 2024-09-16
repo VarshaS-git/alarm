@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code Alarm System</title>
+    <script src="html5-qrcode.min.js"></script> <!-- Include the QR code scanning library -->
+    <style>
+        main {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        #reader {
+            width: 600px;
+            display: none; /* Hidden until needed */
+        }
+        #result, #alarm {
+            text-align: center;
+            font-size: 1.5rem;
+        }
+    </style>
+</head>
+
+<body>
+    <main>
+        <h2>Step 1: Scan QR Code</h2>
+        <div id="reader"></div>
+        <div id="result"></div>
+
+        <!-- Alarm Input Section -->
+        <h2 id="setAlarmSection" style="display:none;">Step 2: Set Alarm</h2>
+        <label for="hourInput" id="alarmInputs" style="display:none;">Hour:</label>
+        <input type="number" id="hourInput" min="0" max="23" style="display:none;">
+        <label for="minuteInput" id="minuteLabel" style="display:none;">Minute:</label>
+        <input type="number" id="minuteInput" min="0" max="59" style="display:none;">
+        <button id="setAlarm" style="display:none;">Set Alarm</button>
+        
+        <div id="alarmsList"></div>
+
+        <audio id="alarmSound" src="./sounds/alarm.mp3"></audio> <!-- Alarm sound -->
+    </main>
+
+    <script>
+        let alarmsArray = [];
+        let qrCode;
+        let alarmSound = document.getElementById('alarmSound');
+        let scanner;
+
+        // Step 1: Start QR Code Scanner
+        function startQRScanner() {
+            document.getElementById('reader').style.display = 'block'; // Show scanner
+
+            scanner = new Html5QrcodeScanner('reader', { qrbox: { width: 250, height: 250 }, fps: 10 });
+            scanner.render(successScan, errorScan);
+        }
+
+        // Handle successful QR code scan
+        function successScan(result) {
+            qrCode = result; // Store the scanned QR code
+            document.getElementById('result').innerHTML = `Scanned QR Code: ${result}`;
+
+            // Stop scanner after a successful scan
+            scanner.clear();
+            document.getElementById('reader').style.display = 'none';
+
+            // Show the alarm setting section after QR code scan
+            document.getElementById('setAlarmSection').style.display = 'block';
+            document.getElementById('hourInput').style.display = 'inline';
+            document.getElementById('minuteInput').style.display = 'inline';
+            document.getElementById('setAlarm').style.display = 'inline';
+            document.getElementById('minuteLabel').style.display = 'inline';
+
+            // Send QR code to backend for validation and storage
+            fetch('http://localhost:3001/store-qrcode', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ qrCode: result }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('QR Code stored:', data);
+            })
+            .catch(error => {
+                console.error('Error storing QR Code:', error);
+            });
+        }
+
+        // Error handler for QR scan
+        function errorScan(err) {
+            console.error('QR code scanning error:', err);
+        }
+
+        // Step 2: Set the alarm
+        function setAlarm() {
+            const hour = document.getElementById('hourInput').value;
+            const minute = document.getElementById('minuteInput').value;
+
+            const alarm = {
+                id: `${hour}_${minute}`,
+                hour,
+                minute,
+                qrCode
+            };
+
+            alarmsArray.push(alarm);
+            displayAlarms();
+
+            // Send the alarm details to the backend
+            fetch('http://localhost:3001/set-alarm', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(alarm),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Alarm set:', data);
+            })
+            .catch(error => console.error('Error setting alarm:', error));
+        }
+
+        // Display the list of alarms
+        function displayAlarms() {
+            const alarmsList = document.getElementById('alarmsList');
+            alarmsList.innerHTML = alarmsArray.map(alarm => 
+                `<div>Alarm set for ${alarm.hour}:${alarm.minute}</div>`).join('');
+        }
+
+        // Event listener for setting alarm
+        document.getElementById('setAlarm').addEventListener('click', setAlarm);
+
+        // Timer to check for active alarms and trigger them
+        setInterval(() => {
+            let date = new Date();
+            let hours = date.getHours();
+            let minutes = date.getMinutes();
+
+            alarmsArray.forEach(alarm => {
+                if (!alarm.isActive && alarm.hour == hours && alarm.minute == minutes) {
+                    alarm.isActive = true;
+                    alarmSound.play(); // Play the alarm sound
+
+                    // Start QR code scanner to stop the alarm
+                    document.getElementById('reader').style.display = 'block';
+                    scanner = new Html5QrcodeScanner('reader', { qrbox: { width: 250, height: 250 }, fps: 10 });
+                    scanner.render(qrSuccessToStop, errorScan);
+                }
+            });
+        }, 1000); // Check every second
+
+        // Handle QR code scan to stop the alarm
+        function qrSuccessToStop(result) {
+            if (result === qrCode) {
+                alarmSound.pause(); // Stop the alarm sound
+                scanner.clear(); // Stop the scanner
+                document.getElementById('reader').style.display = 'none'; // Hide the scanner
+                document.getElementById('result').innerHTML = 'Alarm stopped';
+            } else {
+                document.getElementById('result').innerHTML = 'Wrong QR Code, please scan again!';
+            }
+        }
+
+        // Start QR scanner on page load
+        window.onload = startQRScanner;
+    </script>
+</body>
+</html>
